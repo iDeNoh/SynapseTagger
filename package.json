@@ -1,0 +1,19 @@
+{
+  "name": "image-tag-editor",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cli-progress": "^3.12.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "sharp": "^0.34.3",
+    "winston": "^3.17.0"
+  }
+}

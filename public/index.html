@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Tag Editor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="header-nav">
+            <button id="mobile-tags-toggle" class="mobile-only-btn">☰ Tags</button>
+            <button id="gallery-view-btn" class="nav-view-btn active">Gallery</button>
+            <button id="batch-view-btn" class="nav-view-btn">Batch Tagger</button>
+        </div>
+        <div class="header-actions">
+            <div class="theme-switcher">
+                <span>☀️</span>
+                <label class="switch">
+                    <input type="checkbox" id="theme-toggle" aria-label="Toggle dark mode">
+                    <span class="slider round"></span>
+                </label>
+                <span>🌙</span>
+            </div>
+        </div>
+    </header>
+
+    <div id="app-container">
+
+        <div id="gallery-editor-view" class="container">
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <h2>All Tags</h2>
+                    <button id="clear-filter-btn" class="hidden sidebar-action-btn">Clear Filter</button>
+                </div>
+                <div class="tag-controls">
+                    <label>Sort by:</label>
+                    <select id="sort-tags-select"><option value="alpha">Alphabetical</option><option value="count-desc">Count (Most)</option><option value="count-asc">Count (Least)</option></select>
+                </div>
+                <div id="tag-list-container"></div>
+            </aside>
+
+            <main class="main-content">
+                <section id="gallery-view">
+                    <div class="gallery-controls">
+                        <div class="items-per-page-control">
+                            <label for="items-per-page">Images per page:</label>
+                            <select id="items-per-page"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option><option value="all">All</option></select>
+                        </div>
+                    </div>
+                    <div id="image-gallery" class="gallery"></div>
+                    <div class="pagination-controls" id="pagination-bottom"></div>
+                </section>
+
+                <section id="editor-view" class="hidden">
+                    <button id="back-to-gallery-btn">← Back to Gallery</button>
+                    <div class="editor-content">
+                        <div id="editor-image-container"><img id="editor-image" src="" alt="Selected image"><button id="prev-image-btn" class="nav-btn">◄</button><button id="next-image-btn" class="nav-btn">►</button></div>
+                        <div class="editor-form">
+                            <h3 id="tags-label">Tags</h3>
+                            <textarea id="editor-textarea" rows="10" aria-labelledby="tags-label"></textarea>
+                            <div class="editor-actions">
+                                <button id="save-btn">Save Changes</button>
+                                <button id="reset-btn">Reset</button>
+                                <button id="delete-image-btn" class="danger-btn">Delete Image</button>
+                            </div>
+                            <fieldset class="tagging-box">
+                                <legend>Auto-Tagging</legend>
+                                <div class="batch-mode-selector">
+                                    <label><input type="radio" name="editor-mode" value="append" checked> Append</label>
+                                    <label><input type="radio" name="editor-mode" value="prepend"> Prepend</label>
+                                    <label><input type="radio" name="editor-mode" value="replace"> Replace</label>
+                                </div>
+                                <div class="autotag-controls">
+                                    <label for="autotag-threshold-editor">Threshold: <span id="threshold-value-editor">30%</span></label>
+                                    <input type="range" id="autotag-threshold-editor" min="10" max="90" value="30" step="5">
+                                </div>
+                                <button id="autotag-btn">Auto-Tag this Image</button>
+                            </fieldset>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <div id="batch-view" class="batch-view-container hidden">
+            <div class="batch-box">
+                <h2>Batch Auto-Tagger</h2>
+                <p id="batch-summary-text">This will tag all 0 currently visible images.</p>
+                
+                <fieldset class="tagging-box">
+                    <legend>Tagging Options</legend>
+                    <div class="autotag-controls">
+                        <label for="autotag-threshold-batch">Threshold: <span id="threshold-value-batch">30%</span></label>
+                        <input type="range" id="autotag-threshold-batch" min="10" max="90" value="30" step="5">
+                    </div>
+                    <div class="batch-options">
+                        <div class="batch-mode-selector">
+                            <label><input type="radio" name="batch-mode" value="append" checked> Append</label>
+                            <label><input type="radio" name="batch-mode" value="prepend"> Prepend</label>
+                            <label><input type="radio" name="batch-mode" value="replace"> Replace</label>
+                        </div>
+                        <input type="text" id="batch-custom-tag" placeholder="Add a custom tag to all (optional)">
+                    </div>
+                </fieldset>
+                
+                <button id="start-batch-btn" class="start-batch-btn">Start Batch Tagging</button>
+                
+                <div id="batch-progress-container" class="hidden">
+                    <img id="batch-preview-image" src="" alt="Currently processing...">
+                    <div id="batch-progress-bar-outer"><div id="batch-progress-bar"></div></div>
+                    <div id="batch-progress-text"></div>
+                    <button id="cancel-batch-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="preview-modal" class="preview-modal hidden">
+        <img id="preview-image" src="" alt="Image preview">
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
