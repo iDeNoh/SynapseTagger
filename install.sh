@@ -6,7 +6,7 @@ echo "========================================"
 echo ""
 
 # --- IMPORTANT: CONFIGURE YOUR REPOSITORY URL HERE ---
-REPO_URL="https://github.com/iDeNoh/SynapseTagger"
+REPO_URL="https://github.com/iDeNoh/SynapseTagger.git"
 # ---------------------------------------------------
 
 # Check for Git installation

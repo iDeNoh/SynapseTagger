@@ -5,7 +5,7 @@ echo ========================================
 echo.
 
 :: --- IMPORTANT: CONFIGURE YOUR REPOSITORY URL HERE ---
-set REPO_URL=https://github.com/iDeNoh/SynapseTagger
+set REPO_URL=https://github.com/iDeNoh/SynapseTagger.git
 :: ---------------------------------------------------
 
 :: Check for Git installation
