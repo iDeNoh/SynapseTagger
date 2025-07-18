@@ -36,7 +36,7 @@ Before you begin, ensure you have the following software installed on your syste
 
 1. **Git:** Required for cloning and updating the application. Download from [git-scm.com](https://git-scm.com/downloads).  
 2. **Node.js:** The LTS (Long-Term Support) version is recommended. Download from [nodejs.org](https://nodejs.org/).  
-3. **Python:** Version 3.11 is required. Download from [python.org](https://www.python.org/downloads/).  
+3. **Python:** Version 3.10-3.13. Download from [python.org](https://www.python.org/downloads/).  
    * **Important:** During the Python installation on Windows, make sure to check the box that says **"Add Python to PATH"**.
 
 #### **Setup Instructions**
