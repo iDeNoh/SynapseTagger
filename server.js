@@ -10,10 +10,12 @@ const logger = require('./logger');
 const app = express();
 const PORT = 3000;
 
-const userMediaDir = process.argv[2];
-if (!userMediaDir) {
-    logger.error("Please provide a folder path by dragging a folder onto the start.bat or start.sh script.");
-    process.exit(1);
+if(process.argv[2]){
+    userMediaDir = process.argv[2];
+}
+else {
+    logger.info("no folder provided, defaulting to ./media.");
+    userMediaDir = "./media";
 }
 
 const thumbnailDir = path.join(userMediaDir, '.thumbnails');

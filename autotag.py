@@ -3,6 +3,7 @@ import json
 from PIL import Image
 import torch
 from torchvision import transforms
+from torch.utils.data import Dataset, DataLoader
 from huggingface_hub import hf_hub_download
 import timm 
 
@@ -12,6 +13,9 @@ transform = None
 allowed_tags = None
 device = None
 current_threshold = 0.3 # Default threshold
+torch.backends.cudnn.enabled = True
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_math_sdp(True)
 
 def initialize_autotagger(threshold=0.3):
     """
