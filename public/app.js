@@ -124,16 +124,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const startBatchOperation = async () => {
         const activeOpBtn = operationSelector.querySelector('.operation-btn.active');
         const operationType = activeOpBtn ? activeOpBtn.dataset.op : 'autotag';
-
         if (operationType === 'manual_rate') {
             startManualRating();
             return;
         }
-        
         if (operationType === 'export_final_dataset') {
             showConfirmation(
                 'Export Final Dataset?',
-                `This will move all ${currentGalleryFilenames.length} currently visible images to the 'final' folder.`,
+                `This will copy all ${currentGalleryFilenames.length} currently visible images to the 'final' folder and sanitize their tags.`,
                 async () => {
                     await fetch(`${API_URL}/export-final-dataset`, {
                         method: 'POST',
@@ -146,7 +144,6 @@ document.addEventListener('DOMContentLoaded', () => {
             );
             return;
         }
-
         if (operationType === 'reject_by_score') {
             const rejectThreshold = parseFloat(rejectThresholdSlider.value);
             const affectedItems = allMediaData.filter(item => {
@@ -158,11 +155,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 'Reject Images by Score?',
                 `This will move ${numAffected} of the currently visible images to the 'rejected' folder.`,
                 async () => {
-                    const filenamesToReject = affectedItems.map(item => item.filename);
                     await fetch(`${API_URL}/reject-by-score`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ filenames: filenamesToReject })
+                        body: JSON.stringify({ filenames: affectedItems.map(i => i.filename) })
                     });
                     alert(`${numAffected} images have been rejected.`);
                     reloadAllData();
@@ -170,7 +166,6 @@ document.addEventListener('DOMContentLoaded', () => {
             );
             return;
         }
-
         const confirmationMessage = `This will start the '${operationType}' operation on all ${currentGalleryFilenames.length} currently visible images. This may take a long time and cannot be undone. Continue?`;
         if (!confirm(confirmationMessage)) return;
         startBatchBtn.classList.add('hidden');
@@ -349,11 +344,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (starInput) { starInput.checked = true; } else { document.querySelectorAll('input[name="rating"]').forEach(radio => radio.checked = false); }
         prevImageBtn.disabled = currentEditorIndex === 0;
         nextImageBtn.disabled = currentEditorIndex === currentGalleryFilenames.length - 1;
-        
         const isRejectedView = currentView === 'rejected';
         rejectImageBtn.classList.toggle('hidden', isRejectedView);
         restoreImageBtn.classList.toggle('hidden', !isRejectedView);
-        
         const existingIcon = editorImageContainer.querySelector('.preview-icon-container'); 
         if (existingIcon) existingIcon.remove(); 
         const previewIconHTML = `<div class="preview-icon-container editor-preview-icon" data-filename="${item.filename}"><svg viewBox="0 0 24 24" class="preview-icon"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path></svg></div>`;

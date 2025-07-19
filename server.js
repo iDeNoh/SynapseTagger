@@ -10,198 +10,136 @@ const logger = require('./logger');
 const app = express();
 const PORT = 3000;
 
-if(process.argv[2]){
-    userMediaDir = process.argv[2];
-}
-else {
-    logger.info("no folder provided, defaulting to ./media.");
-    userMediaDir = "./media";
-}
-
+let userMediaDir = process.argv[2] || "./media";
+const rejectedDir = path.join(userMediaDir, 'rejected');
+const finalDir = path.join(userMediaDir, 'final');
 const thumbnailDir = path.join(userMediaDir, '.thumbnails');
+const rejectedThumbnailDir = path.join(rejectedDir, '.thumbnails');
 
-// --- Batch Processing State ---
 let batchState = { isRunning: false, total: 0, processed: 0, currentFile: '', operationType: 'autotag' };
-
-// --- Global AutoTagger Process Management ---
 let autotaggerProcess = null;
 let autotaggerReadyPromise = null;
 let autotaggerOutputBuffer = '';
-let autotaggerOutputCallbacks = []; // Queue for promises waiting for output lines
+let autotaggerOutputCallbacks = [];
 
-/**
- * Ensures the autotagger Python process is running and ready.
- * If not running, it spawns it and waits for initialization signal.
- * @param {number} threshold - The probability threshold for auto-tagging.
- * @returns {Promise<void>} A promise that resolves when the autotagger is ready.
- */
 const ensureAutotaggerReady = (threshold) => {
-    if (autotaggerReadyPromise) {
-        return autotaggerReadyPromise; // Return existing promise if already starting/ready
-    }
-
+    if (autotaggerReadyPromise) return autotaggerReadyPromise;
     autotaggerReadyPromise = new Promise((resolve, reject) => {
         logger.info(`Spawning autotag.py with threshold: ${threshold}`);
         autotaggerProcess = spawn('python', ['autotag.py', String(threshold)]);
-
         autotaggerProcess.stdout.on('data', (data) => {
             autotaggerOutputBuffer += data.toString();
-            // Process lines as they become available
             let newlineIndex;
             while ((newlineIndex = autotaggerOutputBuffer.indexOf('\n')) !== -1) {
                 const line = autotaggerOutputBuffer.substring(0, newlineIndex).trim();
                 autotaggerOutputBuffer = autotaggerOutputBuffer.substring(newlineIndex + 1);
-                if (autotaggerOutputCallbacks.length > 0) {
-                    const callback = autotaggerOutputCallbacks.shift();
-                    callback.resolve(line); // Resolve the oldest waiting promise with the line
-                }
+                if (autotaggerOutputCallbacks.length > 0) autotaggerOutputCallbacks.shift().resolve(line);
             }
         });
-
         autotaggerProcess.stderr.on('data', (data) => {
             const message = data.toString().trim();
             if (message) {
                 logger.info(`[AutoTagger]: ${message}`);
-                if (message.includes("Tagger initialized and ready.")) {
-                    resolve(); // Resolve the ready promise when initialization is confirmed
-                }
+                if (message.includes("Tagger initialized and ready.")) resolve();
             }
         });
-
         autotaggerProcess.on('close', (code) => {
             logger.warn(`Autotagger process exited with code ${code}`);
-            // Added null check for autotaggerReadyPromise
-            if (code !== 0 && autotaggerReadyPromise && !autotaggerReadyPromise._resolved) { // If it exited with error before resolving ready promise
-                reject(new Error(`Autotagger exited prematurely with code ${code}`));
-            }
-            autotaggerProcess = null; // Clear process reference
-            autotaggerReadyPromise = null; // Clear promise reference
-            // Reject any remaining waiting callbacks
-            autotaggerOutputCallbacks.forEach(cb => cb.reject(new Error("Autotagger process closed prematurely.")));
-            autotaggerOutputCallbacks = [];
-        });
-
-        autotaggerProcess.on('error', (err) => {
-            logger.error(`Failed to start autotagger process: ${err.message}`);
-            if (autotaggerReadyPromise && !autotaggerReadyPromise._resolved) { // If it failed before resolving ready promise
-                reject(err);
-            }
             autotaggerProcess = null;
             autotaggerReadyPromise = null;
-            autotaggerOutputCallbacks.forEach(cb => cb.reject(err));
-            autotaggerOutputCallbacks = [];
         });
     });
-
-    // Mark promise as not yet resolved to handle premature exits
-    autotaggerReadyPromise._resolved = false;
-    autotaggerReadyPromise.then(() => { autotaggerReadyPromise._resolved = true; }).catch(() => { autotaggerReadyPromise._resolved = true; });
-
     return autotaggerReadyPromise;
 };
 
-/**
- * Sends an image path to the autotagger process and waits for tags.
- * @param {string} imagePath - The full path to the image.
- * @returns {Promise<string>} A promise that resolves with the generated tags.
- */
 const getTagsFromAutotagger = (imagePath) => {
     return new Promise((resolve, reject) => {
-        if (!autotaggerProcess || !autotaggerProcess.stdin.writable) {
-            return reject(new Error("Autotagger process is not running or not writable."));
-        }
-
-        // Queue this promise's resolve/reject functions
+        if (!autotaggerProcess || !autotaggerProcess.stdin.writable) return reject(new Error("Autotagger process is not running or not writable."));
         autotaggerOutputCallbacks.push({ resolve, reject });
-
-        // Write the image path to stdin
         autotaggerProcess.stdin.write(`${imagePath}\n`);
     });
 };
 
-// Cleanup function to kill the autotagger process when the server exits
 const cleanupAutotagger = () => {
     if (autotaggerProcess) {
         logger.info("Terminating autotagger process...");
-        autotaggerProcess.kill(); // Send SIGTERM
+        autotaggerProcess.kill();
         autotaggerProcess = null;
         autotaggerReadyPromise = null;
     }
 };
 
-process.on('exit', cleanupAutotagger);
-process.on('SIGINT', () => { cleanupAutotagger(); process.exit(); }); // Ctrl+C
-process.on('SIGTERM', cleanupAutotagger); // kill command
-
-// --- Thumbnail Generation Logic ---
-const generateThumbnails = async () => {
+const generateThumbnails = async (sourceDir, thumbDir) => {
     try {
-        await fs.mkdir(thumbnailDir, { recursive: true });
-        logger.info('Checking for new images to thumbnail...');
-        const files = await fs.readdir(userMediaDir);
+        await fs.mkdir(thumbDir, { recursive: true });
+        const files = await fs.readdir(sourceDir);
         const imageFiles = files.filter(file => /\.(jpe?g|png|gif|webp)$/i.test(file));
-        const imagesToProcess = [];
         for (const imageFile of imageFiles) {
-            const thumbPath = path.join(thumbnailDir, imageFile);
-            try {
-                await fs.access(thumbPath);
-            } catch (error) {
-                imagesToProcess.push(imageFile);
+            const thumbPath = path.join(thumbDir, imageFile);
+            try { await fs.access(thumbPath); } catch (error) {
+                const sourcePath = path.join(sourceDir, imageFile);
+                await sharp(sourcePath).resize(300, 300, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(thumbPath);
             }
-        }
-        if (imagesToProcess.length > 0) {
-            logger.info(`Found ${imagesToProcess.length} new images to process.`);
-            const progressBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
-            progressBar.start(imagesToProcess.length, 0);
-            for (const imageFile of imagesToProcess) {
-                const sourcePath = path.join(userMediaDir, imageFile);
-                const thumbPath = path.join(thumbnailDir, imageFile);
-                try {
-                    await sharp(sourcePath).resize(300, 300, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(thumbPath);
-                } catch (error) {
-                    logger.error(`Failed to generate thumbnail for ${imageFile}: ${error.message}`);
-                }
-                progressBar.increment();
-            }
-            progressBar.stop();
-            logger.info('Thumbnail generation complete.');
-        } else {
-            logger.info('All thumbnails are up to date.');
         }
     } catch (error) {
-        logger.error(`Error during thumbnail generation: ${error.message}`);
+        if (error.code !== 'ENOENT') logger.error(`Error during thumbnail generation in ${sourceDir}: ${error.message}`);
     }
 };
 
-// --- Server Setup & Middleware ---
+const getTextFilePath = (imageFile, directory) => {
+    const { name } = path.parse(imageFile);
+    return path.join(directory, `${name}.txt`);
+};
+
+const moveFile = async (filename, fromDir, toDir) => {
+    await fs.mkdir(toDir, { recursive: true });
+    const fromThumbDir = path.join(fromDir, '.thumbnails');
+    const toThumbDir = path.join(toDir, '.thumbnails');
+    await fs.mkdir(toThumbDir, { recursive: true });
+    const sourceImg = path.join(fromDir, filename);
+    const destImg = path.join(toDir, filename);
+    const sourceTxt = getTextFilePath(filename, fromDir);
+    const destTxt = getTextFilePath(filename, toDir);
+    const sourceThumb = path.join(fromThumbDir, filename);
+    const destThumb = path.join(toThumbDir, filename);
+    await fs.rename(sourceImg, destImg).catch(e => logger.warn(`Could not move image: ${filename}`));
+    await fs.rename(sourceTxt, destTxt).catch(e => {});
+    await fs.rename(sourceThumb, destThumb).catch(e => {});
+};
+
 logger.info(`Serving media from: ${userMediaDir}`);
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 app.use('/user-images', express.static(userMediaDir));
 app.use('/thumbnails', express.static(thumbnailDir));
+app.use('/rejected-images', express.static(rejectedDir));
+app.use('/rejected-thumbnails', express.static(rejectedThumbnailDir));
 
-// --- Helper Functions ---
-const getTextFilePath = (imageFile, directory) => {
-    const { name } = path.parse(imageFile);
-    return path.join(directory, `${name}.txt`);
-};
-
-// --- API Routes ---
 app.get('/api/media', async (req, res) => {
+    const view = req.query.view || 'active';
+    const mediaDir = view === 'rejected' ? rejectedDir : userMediaDir;
+    const thumbUrlPrefix = view === 'rejected' ? '/rejected-thumbnails' : '/thumbnails';
+    const imageUrlPrefix = view === 'rejected' ? '/rejected-images' : '/user-images';
     try {
-        const files = await fs.readdir(userMediaDir);
+        await fs.mkdir(mediaDir, { recursive: true });
+        const files = await fs.readdir(mediaDir);
         const imageFiles = files.filter(file => /\.(jpe?g|png|gif|webp)$/i.test(file));
         const mediaData = await Promise.all(imageFiles.map(async (file) => {
-            const txtPath = getTextFilePath(file, userMediaDir);
-            let content = '';
-            try { content = await fs.readFile(txtPath, 'utf8'); } catch (error) { /* ignore */ }
-            return {
-                filename: file,
-                content: content.trim(),
-                imageUrl: `/user-images/${encodeURIComponent(file)}`,
-                thumbnailUrl: `/thumbnails/${encodeURIComponent(file)}`
-            };
+            const txtPath = getTextFilePath(file, mediaDir);
+            let content = '', metadata = {}, rating = 0, aesthetic_score = null;
+            try {
+                content = await fs.readFile(txtPath, 'utf8');
+                const ratingMatch = content.match(/rating:(\d)/);
+                if (ratingMatch) rating = parseInt(ratingMatch[1], 10);
+                const scoreMatch = content.match(/aesthetic_score:([\d.]+)/);
+                if (scoreMatch) aesthetic_score = parseFloat(scoreMatch[1]);
+            } catch (error) {}
+            try {
+                const imageMetadata = await sharp(path.join(mediaDir, file)).metadata();
+                metadata = { width: imageMetadata.width, height: imageMetadata.height, format: imageMetadata.format };
+            } catch (error) { logger.error(`Could not read metadata for ${file}: ${error.message}`); }
+            return { filename: file, content: content.trim(), imageUrl: `${imageUrlPrefix}/${encodeURIComponent(file)}`, thumbnailUrl: `${thumbUrlPrefix}/${encodeURIComponent(file)}`, metadata, rating, aesthetic_score };
         }));
         res.json(mediaData);
     } catch (error) {
@@ -231,7 +169,9 @@ app.get('/api/tags', async (req, res) => {
 });
 
 app.put('/api/media/:filename', async (req, res) => {
-    const txtFile = getTextFilePath(req.params.filename, userMediaDir);
+    const isRejected = req.body.isRejected || false;
+    const mediaDir = isRejected ? rejectedDir : userMediaDir;
+    const txtFile = getTextFilePath(req.params.filename, mediaDir);
     try {
         await fs.writeFile(txtFile, req.body.content);
         res.json({ message: 'File updated successfully' });
@@ -241,20 +181,14 @@ app.put('/api/media/:filename', async (req, res) => {
     }
 });
 
-app.delete('/api/media/:filename', async (req, res) => {
-    const filename = req.params.filename;
-    const imageFile = path.join(userMediaDir, filename);
-    const txtFile = getTextFilePath(filename, userMediaDir);
-    const thumbFile = path.join(thumbnailDir, filename);
-    try {
-        await fs.unlink(imageFile);
-        try { await fs.unlink(txtFile); } catch (e) { /* ignore if no txt file */ logger.warn(`No text file to delete for ${filename}`); }
-        try { await fs.unlink(thumbFile); } catch (e) { /* ignore if no thumb file */ logger.warn(`No thumbnail to delete for ${filename}`); }
-        res.json({ message: 'Files deleted successfully' });
-    } catch (error) {
-        logger.error(`API Error on DELETE /api/media: ${error.message}`);
-        res.status(500).send('Error deleting files.');
-    }
+app.post('/api/reject/:filename', async (req, res) => {
+    await moveFile(req.params.filename, userMediaDir, rejectedDir);
+    res.json({ message: 'File rejected successfully' });
+});
+
+app.post('/api/restore/:filename', async (req, res) => {
+    await moveFile(req.params.filename, rejectedDir, userMediaDir);
+    res.json({ message: 'File restored successfully' });
 });
 
 app.delete('/api/tags/:tag', async (req, res) => {
@@ -264,22 +198,11 @@ app.delete('/api/tags/:tag', async (req, res) => {
         const txtFiles = files.filter(file => file.endsWith('.txt'));
         for (const file of txtFiles) {
             const filePath = path.join(userMediaDir, file);
-            let content = '';
-            try {
-                content = await fs.readFile(filePath, 'utf8');
-            } catch (readError) {
-                logger.warn(`Could not read text file ${file} for tag removal: ${readError.message}`);
-                continue; // Skip to next file if read fails
-            }
-            
+            let content = await fs.readFile(filePath, 'utf8').catch(() => '');
             const tags = content.split(',').map(t => t.trim()).filter(Boolean);
             if (tags.some(t => t.toLowerCase() === tagToRemove.toLowerCase())) {
                 const newTags = tags.filter(t => t.toLowerCase() !== tagToRemove.toLowerCase());
-                try {
-                    await fs.writeFile(filePath, newTags.join(', '));
-                } catch (writeError) {
-                    logger.error(`Failed to write to text file ${file} during tag removal: ${writeError.message}`);
-                }
+                await fs.writeFile(filePath, newTags.join(', '));
             }
         }
         res.json({ message: `Tag '${tagToRemove}' removed from all files.` });
@@ -289,17 +212,13 @@ app.delete('/api/tags/:tag', async (req, res) => {
     }
 });
 
-// Single image auto-tagging using the persistent autotagger process
 app.post('/api/autotag/:filename', async (req, res) => {
     const filename = req.params.filename;
     const imagePath = path.join(userMediaDir, filename);
-    const threshold = req.body.threshold || 0.3; // This threshold will initialize or re-initialize the global process
-
-    logger.info(`Single auto-tagging request for: ${filename} with threshold: ${threshold}`);
+    const threshold = req.body.threshold || 0.3;
     try {
-        await ensureAutotaggerReady(threshold); // Ensure process is ready
+        await ensureAutotaggerReady(threshold);
         const tags = await getTagsFromAutotagger(imagePath);
-        logger.info(`Successfully generated tags for: ${filename}`);
         res.json({ tags });
     } catch (error) {
         logger.error(`Auto-tagging script failed for ${filename}: ${error.message}`);
@@ -307,7 +226,6 @@ app.post('/api/autotag/:filename', async (req, res) => {
     }
 });
 
-// Modified batch tagging endpoint to handle multiple operation types and use persistent autotagger
 app.post('/api/autotag-batch', async (req, res) => {
     if (batchState.isRunning) {
         return res.status(409).json({ message: "A batch job is already in progress." });
@@ -316,121 +234,192 @@ app.post('/api/autotag-batch', async (req, res) => {
     if (!filenames || filenames.length === 0) {
         return res.status(400).json({ message: "No filenames provided for batch operation." });
     }
-
     batchState = { isRunning: true, total: filenames.length, processed: 0, currentFile: '', operationType: operationType || 'autotag' };
     res.status(202).json({ message: "Batch operation process started." });
-
-    // Start autotagger process if operation is autotag and it's not already running
-    if (batchState.operationType === 'autotag') {
-        try {
-            await ensureAutotaggerReady(threshold);
-        } catch (error) {
-            logger.error(`Failed to start autotagger for batch: ${error.message}`);
-            batchState.isRunning = false;
-            return;
+    let childProcess = null;
+    let outputBuffer = '';
+    let outputCallbacks = [];
+    const cleanupChildProcess = () => {
+        if (childProcess) {
+            childProcess.kill();
+            childProcess = null;
         }
-    }
-
-    // Process files in the background
+        cleanupAutotagger();
+    };
+    const runProcessAndGetOutput = (imagePath) => {
+        return new Promise((resolve, reject) => {
+            if (!childProcess || !childProcess.stdin.writable) return reject(new Error("Child process is not running or not writable."));
+            outputCallbacks.push({ resolve, reject });
+            childProcess.stdin.write(`${imagePath}\n`);
+        });
+    };
+    const initializeProcess = (script, args = []) => {
+        return new Promise((resolve, reject) => {
+            childProcess = spawn('python', [script, ...args]);
+            childProcess.stdout.on('data', (data) => {
+                outputBuffer += data.toString();
+                let newlineIndex;
+                while ((newlineIndex = outputBuffer.indexOf('\n')) !== -1) {
+                    const line = outputBuffer.substring(0, newlineIndex).trim();
+                    outputBuffer = outputBuffer.substring(newlineIndex + 1);
+                    if (outputCallbacks.length > 0) outputCallbacks.shift().resolve(line);
+                }
+            });
+            childProcess.stderr.on('data', (data) => {
+                const message = data.toString().trim();
+                if (message) {
+                    logger.info(`[${script}]: ${message}`);
+                    if (message.includes("initialized and ready.")) resolve();
+                }
+            });
+            childProcess.on('close', (code) => {
+                logger.warn(`${script} exited with code ${code}`);
+                childProcess = null;
+            });
+        });
+    };
     (async () => {
-        for (const filename of filenames) {
-            if (!batchState.isRunning) {
-                logger.info("Batch operation process was cancelled by user.");
-                break;
-            }
-            batchState.currentFile = filename;
-            const txtPath = getTextFilePath(filename, userMediaDir);
-            const imagePath = path.join(userMediaDir, filename);
-
-            try {
+        try {
+            if (operationType === 'autotag') await initializeProcess('autotag.py', [String(threshold)]);
+            else if (operationType === 'rate_general') await initializeProcess('aesthetic_rater_general.py');
+            else if (operationType === 'rate_anime') await initializeProcess('aesthetic_rater_anime.py');
+            for (const filename of filenames) {
+                if (!batchState.isRunning) break;
+                batchState.currentFile = filename;
+                const txtPath = getTextFilePath(filename, userMediaDir);
+                const imagePath = path.join(userMediaDir, filename);
                 let currentContent = await fs.readFile(txtPath, 'utf8').catch(() => '');
-                let existingTags = currentContent.split(',').map(t => t.trim()).filter(Boolean);
-                let finalTags = new Set(existingTags);
-
-                if (batchState.operationType === 'autotag') {
-                    try {
-                        // Check if image file exists before requesting tags from autotagger
-                        await fs.access(imagePath);
-                        const generatedTags = await getTagsFromAutotagger(imagePath); // Use persistent autotagger
-                        let newTags = generatedTags.split(',').map(t => t.trim()).filter(Boolean);
-                        const customTagClean = customTag ? customTag.trim() : null;
-    
-                        if (mode === 'replace') {
-                            finalTags.clear();
-                            newTags.forEach(t => finalTags.add(t));
-                            if (customTagClean) finalTags.add(customTagClean);
-                        } else if (mode === 'prepend') {
-                            const tempTags = new Set();
-                            newTags.forEach(t => tempTags.add(t));
-                            if (customTagClean) tempTags.add(customTagClean);
-                            existingTags.forEach(t => tempTags.add(t));
-                            finalTags = tempTags;
-                        } else { // Append by default
-                            if (customTagClean) finalTags.add(customTagClean);
-                            newTags.forEach(t => finalTags.add(t));
-                        }
-                    } catch (autotagError) {
-                        if (autotagError.message.includes('No such file or directory') || autotagError.message.includes('Image file not found')) {
-                            logger.warn(`Skipping autotag for ${filename}: image file not found. ${autotagError.message}`);
-                            // Do not update the text file if image is missing
-                            batchState.processed++;
-                            continue; // Move to next file
-                        } else {
-                            throw autotagError;
-                        }
+                let existingTags = new Set(currentContent.split(',').map(t => t.trim()).filter(Boolean));
+                if (operationType === 'autotag') {
+                    const generatedTagsText = await runProcessAndGetOutput(imagePath);
+                    let newTags = generatedTagsText.split(',').map(t => t.trim()).filter(Boolean);
+                    if (mode === 'replace') {
+                        const ratingTag = Array.from(existingTags).find(t => t.startsWith('rating:'));
+                        const scoreTag = Array.from(existingTags).find(t => t.startsWith('aesthetic_score:'));
+                        existingTags.clear();
+                        newTags.forEach(t => existingTags.add(t));
+                        if(ratingTag) existingTags.add(ratingTag);
+                        if(scoreTag) existingTags.add(scoreTag);
+                    } else if (mode === 'prepend') {
+                        const tempTags = new Set(newTags);
+                        existingTags.forEach(t => tempTags.add(t));
+                        existingTags = tempTags;
+                    } else {
+                        newTags.forEach(t => existingTags.add(t));
                     }
-                } else if (batchState.operationType === 'find-replace') {
-                    const findTag = tagToFind.toLowerCase();
-                    const replaceTag = tagToReplace ? tagToReplace.trim() : null;
-
-                    const tempTags = new Set();
-                    existingTags.forEach(tag => {
-                        if (tag.toLowerCase() === findTag) {
-                            if (replaceTag) {
-                                tempTags.add(replaceTag);
-                            }
-                        } else {
-                            tempTags.add(tag);
-                        }
-                    });
-                    finalTags = tempTags;
+                    if (customTag) existingTags.add(customTag.trim());
+                } else if (operationType === 'rate_general' || operationType === 'rate_anime') {
+                    const score = await runProcessAndGetOutput(imagePath);
+                    existingTags.forEach(tag => { if (tag.startsWith('aesthetic_score:')) existingTags.delete(tag); });
+                    existingTags.add(`aesthetic_score:${score}`);
+                } else if (operationType === 'find_replace') {
+                    const findTagLower = tagToFind.toLowerCase();
+                    const tagsToReplace = Array.from(existingTags).filter(t => t.toLowerCase() === findTagLower);
+                    if (tagsToReplace.length > 0) {
+                        tagsToReplace.forEach(t => existingTags.delete(t));
+                        if (tagToReplace) existingTags.add(tagToReplace.trim());
+                    }
                 }
-
-                try {
-                    await fs.writeFile(txtPath, Array.from(finalTags).join(', '));
-                } catch (writeError) {
-                    logger.error(`Failed to write tags for ${filename}: ${writeError.message}`);
-                }
-            } catch (error) {
-                logger.error(`Error processing ${filename} in batch: ${error.message}`);
+                await fs.writeFile(txtPath, Array.from(existingTags).join(', '));
+                batchState.processed++;
             }
-            batchState.processed++;
+        } catch (error) {
+            logger.error(`Error during batch operation: ${error.message}`);
+        } finally {
+            batchState.isRunning = false;
+            logger.info("Batch operation finished.");
+            cleanupChildProcess();
         }
-        batchState.isRunning = false;
-        logger.info("Batch operation process finished.");
-        cleanupAutotagger(); // Terminate autotagger process after batch completion
     })();
 });
 
-app.get('/api/autotag-batch/status', (req, res) => {
-    res.json(batchState);
-});
-
+app.get('/api/autotag-batch/status', (req, res) => res.json(batchState));
 app.post('/api/autotag-batch/cancel', (req, res) => {
     if (batchState.isRunning) {
         batchState.isRunning = false;
         logger.info("Received request to cancel batch job.");
-        cleanupAutotagger(); // Terminate autotagger process on cancel
+        cleanupAutotagger();
         res.status(200).json({ message: "Batch job cancellation requested." });
     } else {
         res.status(404).json({ message: "No batch job is currently running." });
     }
 });
 
-// --- Start Server ---
-app.listen(PORT, '0.0.0.0', () => {
-    logger.info(`Server started. Listening on all network interfaces.`);
-    logger.info(`Open your browser to http://localhost:${PORT} on this machine.`);
-    logger.info(`On other devices, connect to this machine's local IP address on port ${PORT}.`);
-    generateThumbnails();
+const clearTagsByType = async (res, tagPrefix) => {
+    try {
+        const files = await fs.readdir(userMediaDir);
+        const txtFiles = files.filter(file => file.endsWith('.txt'));
+        for (const file of txtFiles) {
+            const filePath = path.join(userMediaDir, file);
+            let content = await fs.readFile(filePath, 'utf8').catch(() => '');
+            let tags = content.split(',').map(t => t.trim()).filter(Boolean);
+            const newTags = tags.filter(t => !t.startsWith(tagPrefix));
+            await fs.writeFile(filePath, newTags.join(', '));
+        }
+        res.json({ message: `Successfully cleared all tags starting with '${tagPrefix}'.` });
+    } catch (error) {
+        logger.error(`API Error on clearing tags: ${error.message}`);
+        res.status(500).send('Error clearing tag data.');
+    }
+};
+
+app.post('/api/clear-ratings', async (req, res) => {
+    await clearTagsByType(res, 'rating:');
+});
+
+app.post('/api/clear-aesthetic-scores', async (req, res) => {
+    await clearTagsByType(res, 'aesthetic_score:');
+});
+
+app.post('/api/reject-by-score', async (req, res) => {
+    const { filenames } = req.body;
+    let rejectedCount = 0;
+    try {
+        for (const filename of filenames) {
+            await moveFile(filename, userMediaDir, rejectedDir);
+            rejectedCount++;
+        }
+        res.json({ message: `Successfully rejected ${rejectedCount} images.` });
+    } catch (error) {
+        logger.error(`API Error on rejecting by score: ${error.message}`);
+        res.status(500).send('Error during rejection process.');
+    }
+});
+
+app.post('/api/export-final-dataset', async (req, res) => {
+    const { filenames } = req.body;
+    let exportedCount = 0;
+    try {
+        await fs.mkdir(finalDir, { recursive: true });
+        for (const filename of filenames) {
+            const sourceImgPath = path.join(userMediaDir, filename);
+            const destImgPath = path.join(finalDir, filename);
+            await fs.copyFile(sourceImgPath, destImgPath);
+
+            const sourceTxtPath = getTextFilePath(filename, userMediaDir);
+            const destTxtPath = getTextFilePath(filename, finalDir);
+            try {
+                let content = await fs.readFile(sourceTxtPath, 'utf8');
+                let tags = content.split(',').map(t => t.trim()).filter(Boolean);
+                const sanitizedTags = tags.filter(t => !t.startsWith('rating:') && !t.startsWith('aesthetic_score:'));
+                await fs.writeFile(destTxtPath, sanitizedTags.join(', '));
+            } catch (error) {
+                // If source txt doesn't exist, just ignore it and don't create one in final.
+            }
+            exportedCount++;
+        }
+        res.json({ message: `Successfully exported ${exportedCount} images to the 'final' folder.` });
+    } catch (error) {
+        logger.error(`API Error on exporting dataset: ${error.message}`);
+        res.status(500).send('Error during export process.');
+    }
+});
+
+app.listen(PORT, '0.0.0.0', async () => {
+    logger.info(`Server started. Listening on http://localhost:${PORT}`);
+    await fs.mkdir(rejectedDir, { recursive: true });
+    await fs.mkdir(finalDir, { recursive: true });
+    await generateThumbnails(userMediaDir, thumbnailDir);
+    await generateThumbnails(rejectedDir, rejectedThumbnailDir);
+    await generateThumbnails(finalDir, path.join(finalDir, '.thumbnails'));
 });
