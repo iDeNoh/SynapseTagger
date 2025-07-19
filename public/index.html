@@ -11,7 +11,8 @@
         <div class="header-nav">
             <button id="mobile-tags-toggle" class="mobile-only-btn">☰ Tags</button>
             <button id="gallery-view-btn" class="nav-view-btn active">Gallery</button>
-            <button id="batch-view-btn" class="nav-view-btn">Batch Tagger</button>
+            <button id="batch-view-btn" class="nav-view-btn">Batch Operations</button>
+            <button id="settings-view-btn" class="nav-view-btn">Settings</button>
         </div>
         <div class="header-actions">
             <div class="theme-switcher">
@@ -26,12 +27,14 @@
     </header>
 
     <div id="app-container">
-
         <div id="gallery-editor-view" class="container">
             <aside class="sidebar">
                 <div class="sidebar-header">
                     <h2>All Tags</h2>
                     <button id="clear-filter-btn" class="hidden sidebar-action-btn">Clear Filter</button>
+                </div>
+                <div class="tag-search-container">
+                    <input type="text" id="tag-search-input" placeholder="Search tags...">
                 </div>
                 <div class="tag-controls">
                     <label>Sort by:</label>
@@ -47,6 +50,18 @@
                             <label for="items-per-page">Images per page:</label>
                             <select id="items-per-page"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option><option value="all">All</option></select>
                         </div>
+                        <div class="sort-controls">
+                            <button class="sort-btn" data-sort="resolution">Resolution</button>
+                            <button class="sort-btn" data-sort="rating">Rating</button>
+                            <button class="sort-btn" data-sort="format">File Type</button>
+                        </div>
+                        <div class="view-rejected-control">
+                            <label class="switch">
+                                <input type="checkbox" id="view-rejected-toggle">
+                                <span class="slider round"></span>
+                            </label>
+                            <span>View Rejected</span>
+                        </div>
                     </div>
                     <div id="image-gallery" class="gallery"></div>
                     <div class="pagination-controls" id="pagination-bottom"></div>
@@ -58,11 +73,23 @@
                         <div id="editor-image-container"><img id="editor-image" src="" alt="Selected image"><button id="prev-image-btn" class="nav-btn">◄</button><button id="next-image-btn" class="nav-btn">►</button></div>
                         <div class="editor-form">
                             <h3 id="tags-label">Tags</h3>
+                            <div id="image-info-box">
+                                <div id="image-info-text"></div>
+                                <div class="rating-display">
+                                    <span id="aesthetic-score-display">Aesthetic Score: N/A</span>
+                                    <div class="rating-stars" id="editor-rating">
+                                        <input type="radio" id="star3" name="rating" value="3"><label for="star3">★</label>
+                                        <input type="radio" id="star2" name="rating" value="2"><label for="star2">★</label>
+                                        <input type="radio" id="star1" name="rating" value="1"><label for="star1">★</label>
+                                    </div>
+                                </div>
+                            </div>
                             <textarea id="editor-textarea" rows="10" aria-labelledby="tags-label"></textarea>
                             <div class="editor-actions">
                                 <button id="save-btn">Save Changes</button>
                                 <button id="reset-btn">Reset</button>
-                                <button id="delete-image-btn" class="danger-btn">Delete Image</button>
+                                <button id="reject-image-btn" class="danger-btn">Reject Image</button>
+                                <button id="restore-image-btn" class="hidden">Restore Image</button>
                             </div>
                             <fieldset class="tagging-box">
                                 <legend>Auto-Tagging</legend>
@@ -84,40 +111,75 @@
         </div>
 
         <div id="batch-view" class="batch-view-container hidden">
-            <div class="batch-box">
-                <h2>Batch Auto-Tagger</h2>
-                <p id="batch-summary-text">This will tag all 0 currently visible images.</p>
-                
-                <fieldset class="tagging-box">
-                    <legend>Tagging Options</legend>
-                    <div class="autotag-controls">
-                        <label for="autotag-threshold-batch">Threshold: <span id="threshold-value-batch">30%</span></label>
-                        <input type="range" id="autotag-threshold-batch" min="10" max="90" value="30" step="5">
-                    </div>
-                    <div class="batch-options">
-                        <div class="batch-mode-selector">
-                            <label><input type="radio" name="batch-mode" value="append" checked> Append</label>
-                            <label><input type="radio" name="batch-mode" value="prepend"> Prepend</label>
-                            <label><input type="radio" name="batch-mode" value="replace"> Replace</label>
-                        </div>
-                        <input type="text" id="batch-custom-tag" placeholder="Add a custom tag to all (optional)">
+            <div id="batch-options-container" class="batch-box">
+                <h2>Batch Operations</h2>
+                <p id="batch-summary-text">This will affect all 0 currently visible images.</p>
+                <div id="operation-selector" class="operation-selector">
+                    <button class="operation-btn active" data-op="autotag">Auto-Tag</button>
+                    <button class="operation-btn" data-op="rate_general">Rate (General)</button>
+                    <button class="operation-btn" data-op="rate_anime">Rate (Anime)</button>
+                    <button class="operation-btn" data-op="find_replace">Find & Replace</button>
+                    <button class="operation-btn" data-op="manual_rate">Manual Rate</button>
+                    <button class="operation-btn danger-btn" data-op="reject_by_score">Reject by Score</button>
+                    <button class="operation-btn" data-op="export_final_dataset">Export Final Dataset</button>
+                </div>
+                <div id="autotag-options" class="options-panel">
+                    <fieldset class="tagging-box"><legend>Auto-Tag Options</legend><div class="autotag-controls"><label for="autotag-threshold-batch">Threshold: <span id="threshold-value-batch">30%</span></label><input type="range" id="autotag-threshold-batch" min="10" max="90" value="30" step="5"></div><div class="batch-options"><div class="batch-mode-selector"><label><input type="radio" name="batch-mode" value="append" checked> Append</label><label><input type="radio" name="batch-mode" value="prepend"> Prepend</label><label><input type="radio" name="batch-mode" value="replace"> Replace</label></div><input type="text" id="batch-custom-tag" placeholder="Add a custom tag to all (optional)"></div></fieldset>
+                </div>
+                <div id="find-replace-options" class="options-panel hidden">
+                    <fieldset class="tagging-box"><legend>Find & Replace Options</legend><div class="find-replace-inputs"><input type="text" id="find-tag-input" placeholder="Tag to find"><input type="text" id="replace-tag-input" placeholder="Replace with (leave blank to delete)"></div></fieldset>
+                </div>
+                <div id="reject-by-score-options" class="options-panel hidden">
+                    <fieldset class="tagging-box danger-zone"><legend>Rejection Options</legend><p class="setting-desc">This will move all visible images with a final weighted score below the threshold to a 'rejected' folder.</p><div class="autotag-controls"><label for="reject-threshold-slider">Threshold: <span id="reject-threshold-value">5.0</span></label><input type="range" id="reject-threshold-slider" min="0" max="10" value="5" step="0.1"></div></fieldset>
+                </div>
+                <button id="start-batch-btn" class="start-batch-btn">Start Batch Operation</button>
+                <div id="batch-progress-container" class="hidden"><img id="batch-preview-image" src="" alt="Currently processing..."><div id="batch-progress-bar-outer"><div id="batch-progress-bar"></div></div><div id="batch-progress-text"></div><button id="cancel-batch-btn">Cancel</button></div>
+            </div>
+            
+            <div id="manual-rate-container" class="manual-rate-box hidden">
+                <div id="manual-rate-image-wrapper"><img id="manual-rate-image" src="" alt="Rate this image"><div class="rating-stars-manual" id="manual-rate-stars"><label for="manual-star1">★</label><label for="manual-star2">★</label><label for="manual-star3">★</label></div></div>
+                <p id="manual-rate-counter">0 unrated images remaining</p>
+                <button id="stop-manual-rate-btn">Stop Rating</button>
+            </div>
+        </div>
+
+        <div id="settings-view" class="settings-view-container hidden">
+            <div class="settings-box">
+                <h2>Settings</h2>
+                <fieldset class="settings-options">
+                    <legend>Aesthetic Rating</legend>
+                    <div class="setting-item">
+                        <label for="user-rating-weight">User Rating Weight: <span id="user-rating-weight-value">0.5</span></label>
+                        <p class="setting-desc">Determines how strongly your 1-3 star rating influences the 0-10 aesthetic score. 0 means no influence, 1 means it has a strong effect.</p>
+                        <input type="range" id="user-rating-weight" min="0" max="1" value="0.5" step="0.05">
                     </div>
                 </fieldset>
-                
-                <button id="start-batch-btn" class="start-batch-btn">Start Batch Tagging</button>
-                
-                <div id="batch-progress-container" class="hidden">
-                    <img id="batch-preview-image" src="" alt="Currently processing...">
-                    <div id="batch-progress-bar-outer"><div id="batch-progress-bar"></div></div>
-                    <div id="batch-progress-text"></div>
-                    <button id="cancel-batch-btn">Cancel</button>
-                </div>
+                <fieldset class="settings-options danger-zone">
+                    <legend>Danger Zone</legend>
+                    <div class="setting-item">
+                        <label>Clear Data</label>
+                        <p class="setting-desc">Permanently remove all rating or score data from every image file. This cannot be undone.</p>
+                        <div class="danger-buttons">
+                            <button id="clear-ratings-btn" class="danger-btn">Clear All 3-Star Ratings</button>
+                            <button id="clear-scores-btn" class="danger-btn">Clear All Aesthetic Scores</button>
+                        </div>
+                    </div>
+                </fieldset>
             </div>
         </div>
     </div>
 
-    <div id="preview-modal" class="preview-modal hidden">
-        <img id="preview-image" src="" alt="Image preview">
+    <div id="preview-modal" class="preview-modal hidden"><img id="preview-image" src="" alt="Image preview"></div>
+
+    <div id="confirmation-modal" class="confirmation-modal hidden">
+        <div class="modal-content">
+            <h3 id="modal-title">Are you sure?</h3>
+            <p id="modal-text">This action cannot be undone.</p>
+            <div class="modal-actions">
+                <button id="modal-confirm-btn" class="danger-btn">Confirm</button>
+                <button id="modal-cancel-btn">Cancel</button>
+            </div>
+        </div>
     </div>
 
     <script src="app.js"></script>
